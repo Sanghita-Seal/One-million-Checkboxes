@@ -1,60 +1,67 @@
-# Checkbox Grid - Real-time Collaboration
+# One Million Checkbox
 
-A real-time collaborative checkbox grid application that synchronizes 500 checkboxes across multiple connected clients using WebSockets, Redis pub/sub, and JWT authentication.
+A real-time collaborative checkbox application built with Node.js, Express, Socket.IO, and Redis/Valkey.
 
-Users open the page, toggle checkboxes, and see updates broadcast instantly to every connected client. The app uses Redis for distributed state management and supports horizontal scaling.
+Users authenticate, open the grid, and every checkbox change is synced live across connected clients. State is persisted in Redis so the grid survives server restarts.
+
+## Demo Video
+
+- YouTube: https://youtu.be/M376gYk6fWQ
+
+Replace the link above with your final demo video URL.
 
 ## Features
 
-- ✨ **Real-time Synchronization** - 500 checkboxes sync instantly across all connected clients via Socket.io
-- 🔐 **JWT Authentication** - Secure token-based authentication with JWKS validation
-- 🎨 **Dark/Light Mode** - Beautiful glassmorphic UI with theme toggle (persisted)
-- 📱 **Responsive Design** - Optimized for desktop and mobile
-- 🚀 **Scalable Architecture** - Redis pub/sub for distributed state management
-- 🔄 **Live Connection Counter** - Real-time user count display
+- Real-time checkbox updates with Socket.IO
+- Persistent checkbox state in Redis hash
+- Cross-instance sync using Redis pub/sub
+- Auth code exchange flow with access token validation
+- JWT verification via JWKS (RS256)
+- Basic per-user rate limiting for checkbox writes
 
 ## Tech Stack
 
-- **Backend**: Node.js + Express.js
-- **Real-time**: Socket.io with WebSocket support
-- **State Management**: Redis/Valkey with pub/sub
-- **Authentication**: JWT with RS256 algorithm (JWKS validation)
-- **Frontend**: Vanilla HTML, CSS, and JavaScript
-- **Containerization**: Docker Compose for easy setup
+- Node.js (ES Modules)
+- Express
+- Socket.IO
+- ioredis
+- jsonwebtoken
+- Valkey/Redis (Docker)
 
 ## Project Structure
 
-```
+```text
 .
-├── index.js                    # Main server with Socket.io & authentication
-├── redis-connection.js         # Redis pub/sub configuration
-├── package.json               # Dependencies
-├── docker-compose.yml         # Valkey/Redis service
-├── README.md                  # This file
+├── docker-compose.yml
+├── index.js
+├── package.json
+├── redis-connection.js
 └── public/
-    ├── index.html             # Main app with 500 checkboxes & theme toggle
-    ├── login.html             # Login interface
-    └── auth.html              # Authentication handler
+    ├── auth.html
+    ├── index.html
+    └── login.html
 ```
 
-## How It Works
+## Prerequisites
 
-1. **Authentication**: Users authenticate via JWT tokens validated against JWKS endpoints
-2. **Connection**: Socket.io establishes WebSocket connections with JWT verification
-3. **State Management**: Checkbox states are stored in Redis
-4. **Synchronization**: 
-   - When a checkbox changes, the client emits `client:checkbox:change` with the access token
-   - Server validates the token and publishes update to Redis pub/sub
-   - All subscribed instances receive the update and broadcast to connected clients
-5. **Real-time Updates**: Connected clients receive instant updates via Socket.io events
-6. **UI Experience**: Glassmorphic design with smooth animations and instant feedback
+- Node.js 18+ (recommended)
+- npm
+- Docker (for Valkey/Redis)
 
-## Getting Started
+## Environment Variables
 
-### Prerequisites
+The server supports these environment variables:
 
-- Node.js (v16 or higher)
-- Docker & Docker Compose (for Redis/Valkey)
+- `PORT` (default: `8000`)
+- `AUTH_ORIGIN` (default in code: `http://localhost:8000`)
+- `AUTH_CLIENT_ID`
+- `AUTH_CLIENT_SECRET`
+- `AUTH_REDIRECT_URI` (optional, fallback: `${req.protocol}://${host}/auth`)
+- `REDIS_URL` (optional, overrides host/port)
+- `REDIS_HOST` (default: `localhost`)
+- `REDIS_PORT` (default: `6379`)
+
+## Setup and Run
 
 ### 1. Install dependencies
 
@@ -62,112 +69,88 @@ Users open the page, toggle checkboxes, and see updates broadcast instantly to e
 npm install
 ```
 
-### 2. Start Redis/Valkey
+### 2. Start Valkey/Redis with Docker
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-### 3. Set environment variables (optional)
+### 3. Start the app
 
-The app includes sensible defaults, but you can override:
+Use correct shell syntax with no spaces around `=`.
 
 ```bash
-# .env or export in your shell
-AUTH_ORIGIN=http://localhost:8000
-AUTH_CLIENT_ID=8f6763b7-bbe8-4c21-938d-e940a80264b1
-AUTH_CLIENT_SECRET=146c4f36-6d5d-4ec4-948d-29d680ac5204
+PORT=5000 AUTH_CLIENT_ID=your-client-id AUTH_CLIENT_SECRET=your-client-secret npm run start
 ```
 
-### 4. Run the server
+PowerShell equivalent:
 
-**Development** (with auto-reload via nodemon):
+```powershell
+$env:PORT="5000"; $env:AUTH_CLIENT_ID="your-client-id"; $env:AUTH_CLIENT_SECRET="your-client-secret"; npm run start
+```
+
+### 4. Open in browser
+
+- App: `http://localhost:5000`
+- Health: `http://localhost:5000/health`
+
+## Authentication Flow
+
+1. Client opens `/` and loads `public/login.html`.
+2. If no valid token exists, client redirects to `/login`.
+3. Server redirects to auth provider at `AUTH_ORIGIN/api/auth/signin` with `client_id` and `redirect_uri`.
+4. Auth provider redirects back to `/auth?code=...`.
+5. `public/auth.html` posts code to `/auth/exchange`.
+6. Server exchanges code at `AUTH_ORIGIN/api/auth/token` and returns access token.
+7. Client stores token and opens `/home`.
+
+## Real-Time Update Flow
+
+1. On connect, server emits full checkbox state with `server:checkbox:status`.
+2. Client emits `client:checkbox:change` with checkbox index, value, and token.
+3. Server validates token (JWKS + RS256).
+4. Server applies rate limit and saves state to Redis hash (`checkbox:state`).
+5. Server emits local update and publishes event to Redis channel (`checkbox:change`).
+6. Other instances consume pub/sub event and broadcast to their connected clients.
+
+## Socket Events
+
+### Client to Server
+
+- `client:checkbox:change`
+  - Payload:
+    - `index: number`
+    - `checked: boolean`
+    - `accessToken: string`
+
+### Server to Client
+
+- `server:checkbox:status` (full boolean array)
+- `server:checkbox:change` (single checkbox change)
+- `server:checkbox:user` (user name who changed a checkbox)
+- `server:error` (validation/rate-limit errors)
+
+## API Routes
+
+- `GET /` -> login page
+- `GET /home` -> checkbox grid
+- `GET /auth` -> auth callback page
+- `GET /login` -> redirect to auth provider
+- `POST /auth/exchange` -> code-to-token exchange
+- `GET /health` -> health check JSON
+
+## Development
+
 ```bash
 npm run dev
 ```
 
-**Production**:
-```bash
-npm start
-```
+## Notes and Improvements
 
-The app will start on:
-
-```
-http://localhost:3000
-```
-
-## Socket.io Events
-
-### Client → Server
-
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `client:checkbox:change` | `{index, checked, accessToken}` | Sent when a checkbox is toggled |
-
-### Server → Client
-
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `server:checkbox:status` | `Array<boolean>` | Full checkbox state on connect |
-| `server:checkbox:change` | `{index, checked}` | Broadcasts checkbox change |
-| `server:checkbox:user` | `{user}` | Notification of who changed a checkbox |
-| `server:error` | `{message, data}` | Error events (e.g., invalid token) |
-
-## Infrastructure
-
-The application uses Redis/Valkey for distributed state management and pub/sub, enabling:
-
-- ✅ Multiple server instances
-- ✅ Reliable state persistence
-- ✅ Horizontal scaling
-- ✅ Cross-instance real-time sync
-- ✅ JWT authentication validation
-
-## Features in Detail
-
-### Authentication Flow
-
-1. Users log in via the `/login` page
-2. The authentication service validates credentials and issues a JWT token
-3. Token is stored in browser localStorage as `accessToken`
-4. Socket.io connections include the token for verification
-5. Server validates token signature using JWKS from `AUTH_ORIGIN`
-6. Invalid tokens result in `server:error` event
-
-### Theme Persistence
-
-- 🌙 Dark mode toggle button in top-right corner
-- ☀️ Shows appropriate icon based on current theme
-- Theme preference saved to localStorage as `theme`
-- Loads automatically on page refresh
-- Smooth transitions between modes
-
-### Performance Optimizations
-
-- JWKS tokens cached for 5 minutes (reduces HTTP requests)
-- Redis pub/sub for efficient distributed updates
-- CSS transitions for smooth UI interactions
-- Backdrop filter blur for glassmorphic effects
-- Responsive grid layout (auto-fit checkboxes)
-
-## Known Limitations
-
-- Requires valid JWT token from AUTH_ORIGIN for socket connections
-- Checkbox state is ephemeral (cleared on service restart)
-- Single authentication provider (AUTH_ORIGIN)
-
-## Future Improvements
-
-- [ ] Persist checkbox state to database for recovery
-- [ ] Add comprehensive test suite (unit, integration, e2e)
-- [ ] Implement rate limiting per user
-- [ ] Add telemetry and monitoring
-- [ ] Support multiple authentication providers
-- [ ] Add WebSocket fallback for browsers without WebSocket support
-- [ ] Implement checkbox history/audit logging
-- [ ] Add user presence indicators
-- [ ] Performance optimization for 1000+ checkboxes
+- Move all auth secrets to environment variables only (avoid hardcoded fallback values in production).
+- Use distributed rate limiting via Redis for multi-instance deployments.
+- Add integration tests for auth flow and socket events.
+- Add structured logging and monitoring.
 
 ## License
 
